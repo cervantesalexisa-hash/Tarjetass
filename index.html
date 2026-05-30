@@ -530,11 +530,16 @@ function computeCardTotals(card, expenses, msis) {
   },0);
   const totalToPay = unpaidExp + pendMsi;
 
+  // ── Cycle breakdown (expenses + MSI cuotas) ──
+  const expThisCycle = expenses.filter(e=>!e.paid && !isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+  const expNextCycle = expenses.filter(e=>!e.paid &&  isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+  const { thisCycleMsi, nextCycleMsi } = getMsiCycleAmounts(msis, card.cutDay);
+
   return { totalCredit, extension, realAvail, used, usedPct, totalToPay,
     cutDays: daysUntil(parseInt(card.cutDay)||1),
     payDays: daysUntil(parseInt(card.payDay)||15),
-    thisCycle: expenses.filter(e=>!e.paid && !isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0),
-    nextCycle: expenses.filter(e=>!e.paid && isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0),
+    thisCycle: expThisCycle + thisCycleMsi,
+    nextCycle:  expNextCycle + nextCycleMsi,
   };
 }
 
@@ -545,12 +550,38 @@ function isNextCycle(dateStr, cutDay) {
   const [y,m,d] = dateStr.split('-').map(Number);
   const expDate = new Date(y, m-1, d);
   const cut = parseInt(cutDay)||1;
-  // Find the most recent cut date
-  const now = today;
-  const cutThisMonth = new Date(now.getFullYear(), now.getMonth(), cut);
-  const cutDate = expDate > cutThisMonth ? cutThisMonth : new Date(now.getFullYear(), now.getMonth()-1, cut);
-  // If expense date is after the current cut date → next cycle
+  const cutThisMonth = new Date(today.getFullYear(), today.getMonth(), cut);
   return expDate > cutThisMonth;
+}
+
+// Returns the date string for a given cuota index of an MSI
+function msiCuotaDate(msi, index) {
+  const mi = (parseInt(msi.startMonth) + index) % 12;
+  const yi = parseInt(msi.startYear) + Math.floor((parseInt(msi.startMonth) + index) / 12);
+  // Use day 1 of that month as the billing date
+  return `${yi}-${String(mi+1).padStart(2,'0')}-01`;
+}
+
+// Returns { thisCycleMsi, nextCycleMsi } — unpaid cuotas grouped by current/next cycle
+function getMsiCycleAmounts(msis, cutDay) {
+  let thisCycleMsi = 0, nextCycleMsi = 0;
+  msis.forEach(m => {
+    const total    = parseInt(m.total)||0;
+    const monthly  = parseFloat(m.monthly)||0;
+    const paidKeys = m.paid||[];
+    for (let i = 0; i < total; i++) {
+      const mk = (() => {
+        const mi = (parseInt(m.startMonth)+i)%12;
+        const yi = parseInt(m.startYear)+Math.floor((parseInt(m.startMonth)+i)/12);
+        return monthKey(yi,mi);
+      })();
+      if (paidKeys.includes(mk)) continue; // already paid, skip
+      const dateStr = msiCuotaDate(m, i);
+      if (isNextCycle(dateStr, cutDay)) nextCycleMsi += monthly;
+      else thisCycleMsi += monthly;
+    }
+  });
+  return { thisCycleMsi, nextCycleMsi };
 }
 
 function CardListItem({ card, expenses, msis, onClick, onEdit }) {
