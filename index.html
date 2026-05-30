@@ -507,14 +507,18 @@ function computeCardTotals(card, expenses, msis) {
   });
 
   // ── MSI adjustment ──
-  // Bank ALREADY charged the FULL MSI upfront — baked into baseAvail.
-  // Each paid cuota releases that credit back. Do NOT subtract stillOwed (double counting).
-  // Formula: msiAdj = paid.length × monthly
+  // baseAvail already reflects ALL pre-existing paid cuotas (paidCount) — bank took them.
+  // Only NEW cuotas palomeated AFTER adding the MSI to the app add credit back.
+  // newlyPaid = paid.length - paidCount  (cuotas ticked by user in the app)
   let msiAdj = 0;
   msis.forEach(m => {
-    const monthly  = parseFloat(m.monthly)||0;
-    const paidKeys = m.paid||[];
-    msiAdj += paidKeys.length * monthly;  // each paid cuota frees credit
+    const monthly   = parseFloat(m.monthly)||0;
+    const paidKeys  = m.paid||[];
+    const paidCount = m.paidCount !== undefined && m.paidCount !== ''
+      ? parseInt(m.paidCount)||0
+      : paidKeys.length; // legacy: treat all as pre-existing → no adjustment
+    const newlyPaid = Math.max(0, paidKeys.length - paidCount);
+    msiAdj += newlyPaid * monthly;
   });
 
   const realAvail = baseAvail + expAdj + msiAdj;
