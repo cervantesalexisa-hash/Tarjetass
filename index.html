@@ -507,21 +507,14 @@ function computeCardTotals(card, expenses, msis) {
   });
 
   // ── MSI adjustment ──
+  // Bank ALREADY charged the FULL MSI upfront — baked into baseAvail.
+  // Each paid cuota releases that credit back. Do NOT subtract stillOwed (double counting).
+  // Formula: msiAdj = paid.length × monthly
   let msiAdj = 0;
   msis.forEach(m => {
-    const total     = parseInt(m.total)||0;
-    const monthly   = parseFloat(m.monthly)||0;
-    const paidKeys  = m.paid||[];
-    // If paidCount is not set (legacy), treat all existing paid cuotas as pre-existing baseline
-    const paidCount = m.paidCount !== undefined && m.paidCount !== ''
-      ? Math.min(parseInt(m.paidCount)||0, paidKeys.length)
-      : paidKeys.length; // legacy: all current paid = baseline, no adjustment for them
-
-    const extraPaid = paidKeys.length - paidCount;   // newly palomeaded → free credit
-    const stillOwed = total - paidKeys.length;        // not yet paid → reserved debt
-
-    msiAdj += extraPaid * monthly;   // +: bank charged these, credit freed
-    msiAdj -= stillOwed * monthly;   // −: bank will charge these, reserve them
+    const monthly  = parseFloat(m.monthly)||0;
+    const paidKeys = m.paid||[];
+    msiAdj += paidKeys.length * monthly;  // each paid cuota frees credit
   });
 
   const realAvail = baseAvail + expAdj + msiAdj;
@@ -1036,21 +1029,19 @@ function ExpenseForm({ initial, cutDay, onSave, onDelete, onClose }) {
 function MsiForm({ initial, onSave, onDelete, onClose }) {
   const blank = {
     desc:'', monthly:'', total:'', startMonth:currentMonth, startYear:currentYear,
-    paid:[], alreadyDiscounted:false, paidCount:''
+    paid:[], paidCount:''
   };
   const [f, setF] = useState(initial
     ? { ...initial,
         monthly: initial.monthly===0?'':initial.monthly,
         total:   initial.total===0?'':initial.total,
-        alreadyDiscounted: initial.alreadyDiscounted||false,
         paidCount: '' }
     : blank);
   const set = k => e => setF(p=>({...p,[k]:e.target.value}));
 
-  // Build preview of which cuotas will be pre-marked paid
-  const totalNum   = parseInt(f.total)||0;
-  const paidNum    = Math.min(parseInt(f.paidCount)||0, totalNum);
-  const isEditing  = !!initial;
+  const totalNum  = parseInt(f.total)||0;
+  const paidNum   = Math.min(parseInt(f.paidCount)||0, totalNum);
+  const isEditing = !!initial;
 
   return (
     <Sheet title={initial?'Editar MSI':'Nuevo MSI / Diferido'} onClose={onClose}>
@@ -1092,21 +1083,20 @@ function MsiForm({ initial, onSave, onDelete, onClose }) {
           </div>
         )}
 
-        <Toggle
-          on={f.alreadyDiscounted}
-          onToggle={()=>setF(p=>({...p,alreadyDiscounted:!p.alreadyDiscounted}))}
-          label="¿La cuota actual ya fue descontada?"
-          sub={f.alreadyDiscounted
-            ? "✅ No se restará del disponible al guardar"
-            : "⚠️ Se restará una cuota del disponible al guardar"}
-        />
+        {/* Info note — no toggle needed, bank always reflects MSI fully */}
+        <div style={{
+          background:'rgba(0,122,255,.06)', borderRadius:'var(--radius-sm)',
+          padding:'10px 14px', marginBottom:14,
+          fontSize:13, color:'var(--text2)', lineHeight:1.4,
+        }}>
+          💡 El banco ya descontó el crédito completo del MSI. Cada cuota que palomees como pagada libera ese crédito en tu disponible.
+        </div>
       </div>
       <div className="sheet-actions">
         {initial && <button className="btn-danger" onClick={()=>{onDelete(initial.id);onClose();}}>Eliminar</button>}
         <button className="btn-secondary" onClick={onClose}>Cancelar</button>
         <button className="btn-primary" onClick={()=>{
           if (!f.desc || !f.monthly) return;
-          // Build pre-paid keys for the first paidCount cuotas
           let prePaid = initial ? initial.paid : [];
           if (!isEditing && paidNum > 0) {
             prePaid = Array.from({length:paidNum},(_,i)=>{
@@ -1115,7 +1105,7 @@ function MsiForm({ initial, onSave, onDelete, onClose }) {
               return monthKey(yi,mi);
             });
           }
-          onSave({...f, paid: prePaid, paidCount: paidNum});  // always save paidCount as number
+          onSave({...f, paid: prePaid, paidCount: paidNum});
           onClose();
         }}>Guardar</button>
       </div>
