@@ -540,12 +540,29 @@ function computeCardTotals(card, expenses, msis) {
   return { totalCredit, extension, realAvail, used, usedPct, totalToPay,
     cutDays: daysUntil(parseInt(card.cutDay)||1),
     payDays: daysUntil(parseInt(card.payDay)||15),
+    thisCycle: expenses.filter(e=>!e.paid && !isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0),
+    nextCycle: expenses.filter(e=>!e.paid && isNextCycle(e.date, card.cutDay)).reduce((a,e)=>a+(parseFloat(e.amount)||0),0),
   };
+}
+
+// ─── CYCLE HELPER ────────────────────────────────────────────────────────────
+// Returns true if a date string falls AFTER the card's cut day (next billing cycle)
+function isNextCycle(dateStr, cutDay) {
+  if (!dateStr) return false;
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const expDate = new Date(y, m-1, d);
+  const cut = parseInt(cutDay)||1;
+  // Find the most recent cut date
+  const now = today;
+  const cutThisMonth = new Date(now.getFullYear(), now.getMonth(), cut);
+  const cutDate = expDate > cutThisMonth ? cutThisMonth : new Date(now.getFullYear(), now.getMonth()-1, cut);
+  // If expense date is after the current cut date → next cycle
+  return expDate > cutThisMonth;
 }
 
 function CardListItem({ card, expenses, msis, onClick, onEdit }) {
   const colorInfo = COLORS.find(c=>c.id===card.color)||COLORS[2];
-  const { realAvail, usedPct, totalToPay, cutDays, payDays } = computeCardTotals(card, expenses, msis);
+  const { realAvail, usedPct, totalToPay, cutDays, payDays, thisCycle, nextCycle } = computeCardTotals(card, expenses, msis);
 
   return (
     <div className="card-list-item" onClick={onClick}>
@@ -578,25 +595,32 @@ function CardListItem({ card, expenses, msis, onClick, onEdit }) {
         </div>
         <div className="bar-wrap">
           <ProgressBar pct={usedPct}/>
-          <div className="bar-labels">
-            <span>{fmt(parseFloat(card.total)||0 - realAvail)} usado</span>
-            <span>{Math.round(usedPct)}%</span>
-          </div>
+          <div className="bar-labels"><span>{Math.round(usedPct)}% utilizado</span></div>
         </div>
-        <div className="cc-days">
-          <div className="cc-day-badge">
-            <div className="num" style={{color:cutDays<=5?'var(--red)':cutDays<=10?'var(--orange)':'var(--text)'}}>{cutDays}</div>
+        {/* Cycle + days row */}
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          <div className="cc-day-badge" style={{flex:1,textAlign:'left',padding:'8px 10px'}}>
+            <div style={{fontSize:9,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>Este ciclo</div>
+            <div style={{fontSize:14,fontWeight:700}}>{fmt(thisCycle)}</div>
+          </div>
+          {nextCycle > 0 ? (
+            <div className="cc-day-badge" style={{flex:1,textAlign:'left',padding:'8px 10px',background:'rgba(0,122,255,.07)'}}>
+              <div style={{fontSize:9,fontWeight:700,color:'var(--blue)',textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>⚡ Sig. ciclo</div>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--blue)'}}>{fmt(nextCycle)}</div>
+            </div>
+          ) : (
+            <div className="cc-day-badge" style={{flex:1,textAlign:'left',padding:'8px 10px'}}>
+              <div style={{fontSize:9,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>Sig. ciclo</div>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text3)'}}>—</div>
+            </div>
+          )}
+          <div className="cc-day-badge" style={{minWidth:52,padding:'8px 10px'}}>
+            <div className="num" style={{fontSize:18,color:cutDays===0?'var(--red)':cutDays<=5?'var(--red)':cutDays<=10?'var(--orange)':'var(--text)'}}>{cutDays}</div>
             <div className="lbl">días corte</div>
           </div>
-          <div className="cc-day-badge">
-            <div className="num" style={{color:payDays<=3?'var(--red)':payDays<=7?'var(--orange)':'var(--text)'}}>{payDays}</div>
+          <div className="cc-day-badge" style={{minWidth:52,padding:'8px 10px'}}>
+            <div className="num" style={{fontSize:18,color:payDays<=3?'var(--red)':payDays<=7?'var(--orange)':'var(--text)'}}>{payDays}</div>
             <div className="lbl">días pago</div>
-          </div>
-          <div className="cc-day-badge">
-            <div className="num" style={{color:'var(--blue)'}}>
-              <IconChevronRight/>
-            </div>
-            <div className="lbl">detalle</div>
           </div>
         </div>
       </div>
@@ -617,12 +641,15 @@ function fmtDateLabel(dateStr) {
   return date.toLocaleDateString('es-MX',{day:'numeric',month:'short',year: y!==now.getFullYear()?'numeric':undefined}).toUpperCase();
 }
 
-function ExpensesTab({ expenses, onToggle, onEdit }) {
-  const total    = expenses.reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
-  const paidAmt  = expenses.filter(e=>e.paid).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
-  const pendAmt  = expenses.filter(e=>!e.paid).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+function ExpensesTab({ expenses, cutDay, onToggle, onEdit }) {
+  const thisCycleExp = expenses.filter(e => !isNextCycle(e.date, cutDay));
+  const nextCycleExp = expenses.filter(e =>  isNextCycle(e.date, cutDay));
 
-  // Group by date, sorted newest first
+  const pendThis = thisCycleExp.filter(e=>!e.paid).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+  const pendNext = nextCycleExp.filter(e=>!e.paid).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+  const paidAmt  = expenses.filter(e=>e.paid).reduce((a,e)=>a+(parseFloat(e.amount)||0),0);
+
+  // Group ALL expenses by date, newest first
   const sorted = [...expenses].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const groups = [];
   sorted.forEach(exp => {
@@ -634,57 +661,64 @@ function ExpensesTab({ expenses, onToggle, onEdit }) {
 
   return (
     <>
-      {/* ── Summary at top ── */}
+      {/* ── Summary ── */}
       <div style={{display:'flex',gap:10,padding:'4px 16px 8px'}}>
-        <div style={{
-          flex:1, background:'var(--card)', borderRadius:'var(--radius-sm)',
-          boxShadow:'var(--shadow)', padding:'10px 14px',
-        }}>
-          <div style={{fontSize:10,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.6,marginBottom:4}}>Pendiente</div>
-          <div style={{fontSize:18,fontWeight:700,color: pendAmt>0?'var(--red)':'var(--text)'}}>{fmt(pendAmt)}</div>
+        <div style={{flex:1,background:'var(--card)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow)',padding:'10px 14px'}}>
+          <div style={{fontSize:10,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.6,marginBottom:4}}>Este ciclo</div>
+          <div style={{fontSize:17,fontWeight:700,color:pendThis>0?'var(--red)':'var(--text)'}}>{fmt(pendThis)}</div>
         </div>
-        <div style={{
-          flex:1, background:'var(--card)', borderRadius:'var(--radius-sm)',
-          boxShadow:'var(--shadow)', padding:'10px 14px',
-        }}>
+        {pendNext > 0 && (
+          <div style={{flex:1,background:'rgba(0,122,255,.06)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow)',padding:'10px 14px'}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--blue)',textTransform:'uppercase',letterSpacing:.6,marginBottom:4}}>⚡ Sig. ciclo</div>
+            <div style={{fontSize:17,fontWeight:700,color:'var(--blue)'}}>{fmt(pendNext)}</div>
+          </div>
+        )}
+        <div style={{flex:1,background:'var(--card)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow)',padding:'10px 14px'}}>
           <div style={{fontSize:10,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.6,marginBottom:4}}>Pagado</div>
-          <div style={{fontSize:18,fontWeight:700,color:'var(--green)'}}>{fmt(paidAmt)}</div>
+          <div style={{fontSize:17,fontWeight:700,color:'var(--green)'}}>{fmt(paidAmt)}</div>
         </div>
       </div>
 
       {/* ── Grouped list ── */}
       {expenses.length === 0
         ? <div className="empty"><div className="icon">🧾</div><p>Sin gastos. Toca + Gasto para agregar.</p></div>
-        : groups.map(group => (
-          <div key={group.date} style={{marginBottom:4}}>
-            <div style={{
-              fontSize:11,fontWeight:700,color:'var(--text2)',
-              letterSpacing:.6,textTransform:'uppercase',
-              padding:'8px 20px 4px',
-            }}>{fmtDateLabel(group.date)}</div>
-
-            <div className="list-wrap" style={{margin:'0 16px'}}>
-              {group.items.map((exp,idx) => (
-                <div key={exp.id} className="expense-item-sm"
-                  style={{borderBottom: idx<group.items.length-1?'1px solid var(--sep)':'none'}}
-                  onClick={()=>onEdit(exp)}>
-                  <div className="expense-icon-sm">{exp.cat.split(' ')[0]}</div>
-                  <div className="expense-info-sm">
-                    <div className="expense-desc-sm">{exp.desc}</div>
-                    <div className="expense-meta-sm">
-                      {exp.cat.split(' ').slice(1).join(' ')}
-                      {exp.note ? <> · <em>{exp.note}</em></> : null}
+        : groups.map(group => {
+          const groupIsNext = isNextCycle(group.date, cutDay);
+          return (
+            <div key={group.date} style={{marginBottom:4}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 20px 4px'}}>
+                <span style={{fontSize:11,fontWeight:700,color:'var(--text2)',letterSpacing:.6,textTransform:'uppercase'}}>
+                  {fmtDateLabel(group.date)}
+                </span>
+                {groupIsNext && (
+                  <span style={{fontSize:10,fontWeight:700,color:'var(--blue)',background:'rgba(0,122,255,.1)',padding:'1px 7px',borderRadius:20}}>
+                    Sig. ciclo
+                  </span>
+                )}
+              </div>
+              <div className="list-wrap" style={{margin:'0 16px'}}>
+                {group.items.map((exp,idx) => (
+                  <div key={exp.id} className="expense-item-sm"
+                    style={{borderBottom: idx<group.items.length-1?'1px solid var(--sep)':'none'}}
+                    onClick={()=>onEdit(exp)}>
+                    <div className="expense-icon-sm">{exp.cat.split(' ')[0]}</div>
+                    <div className="expense-info-sm">
+                      <div className="expense-desc-sm">{exp.desc}</div>
+                      <div className="expense-meta-sm">
+                        {exp.cat.split(' ').slice(1).join(' ')}
+                        {exp.note ? <> · <em>{exp.note}</em></> : null}
+                      </div>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                      <span className={`expense-amt-sm ${exp.paid?'paid':''}`}>{fmt(exp.amount)}</span>
+                      <CheckBtn checked={exp.paid} onToggle={()=>onToggle(exp.id)}/>
                     </div>
                   </div>
-                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                    <span className={`expense-amt-sm ${exp.paid?'paid':''}`}>{fmt(exp.amount)}</span>
-                    <CheckBtn checked={exp.paid} onToggle={()=>onToggle(exp.id)}/>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ))
+          );
+        })
       }
     </>
   );
@@ -898,7 +932,7 @@ function CardDetail({ card, expenses, msis, onBack, onEditCard,
 
       {/* Tab Content */}
       <div style={{marginTop:8}}>
-        {activeTab==='gastos'     && <ExpensesTab expenses={expenses} onToggle={onToggleExpense} onEdit={exp=>onEditExpense(exp,card.id)}/>}
+        {activeTab==='gastos'     && <ExpensesTab expenses={expenses} cutDay={card.cutDay} onToggle={onToggleExpense} onEdit={exp=>onEditExpense(exp,card.id)}/>}
         {activeTab==='msi'        && <MsiTab msis={msis} onTogglePaid={onToggleMsiPaid} onEdit={item=>onEditMsi(item,card.id)}/>}
         {activeTab==='categorias' && <CategoriesTab expenses={expenses}/>}
       </div>
@@ -939,16 +973,16 @@ function CardForm({ initial, onSave, onDelete, onClose }) {
   );
 }
 
-function ExpenseForm({ initial, onSave, onDelete, onClose }) {
+function ExpenseForm({ initial, cutDay, onSave, onDelete, onClose }) {
   const blank = {
     desc:'', amount:'', cat:CATS[12], date:today.toISOString().slice(0,10),
     note:'', paid:false, alreadyDiscounted:false
   };
-  // For new expenses, ALWAYS start with alreadyDiscounted:false regardless of anything
   const [f, setF] = useState(initial
     ? {...initial, amount: initial.amount===0?'':initial.amount}
     : {...blank});
   const set = k => e => setF(p=>({...p,[k]:e.target.value}));
+  const isNext = isNextCycle(f.date, cutDay);
 
   return (
     <Sheet title={initial?'Editar Gasto':'Nuevo Gasto'} onClose={onClose}>
@@ -960,23 +994,40 @@ function ExpenseForm({ initial, onSave, onDelete, onClose }) {
             {CATS.map(c=><option key={c}>{c}</option>)}
           </select>
         </div>
-        <div className="field"><label>Fecha</label><input type="date" value={f.date} onChange={set('date')}/></div>
+        <div className="field">
+          <label>Fecha</label>
+          <input type="date" value={f.date} onChange={set('date')}/>
+          {isNext && (
+            <div style={{
+              marginTop:8, padding:'8px 12px', borderRadius:8,
+              background:'rgba(0,122,255,.08)', color:'var(--blue)',
+              fontSize:12, fontWeight:600, display:'flex', alignItems:'center', gap:6,
+            }}>
+              ⚡ Compra después del corte (día {cutDay}) — va al siguiente estado de cuenta
+            </div>
+          )}
+        </div>
         <div className="field"><label>Nota</label><textarea value={f.note} onChange={set('note')} placeholder="Notas opcionales…"/></div>
 
-        {/* KEY TOGGLE */}
-        <Toggle
-          on={f.alreadyDiscounted}
-          onToggle={()=>setF(p=>({...p,alreadyDiscounted:!p.alreadyDiscounted}))}
-          label="¿Ya está descontado de tu saldo disponible?"
-          sub={f.alreadyDiscounted
-            ? "✅ El banco ya lo descontó — no se restará del disponible"
-            : "⚠️ No descontado aún — se restará del disponible al guardar"}
-        />
+        {/* TOGGLE */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:600,color:'var(--text2)',textTransform:'uppercase',letterSpacing:.4,marginBottom:6}}>
+            ¿Ya está descontado de tu saldo disponible?
+          </div>
+          <Toggle
+            on={f.alreadyDiscounted}
+            onToggle={()=>setF(p=>({...p,alreadyDiscounted:!p.alreadyDiscounted}))}
+            label={f.alreadyDiscounted ? 'Sí, el banco ya lo descontó' : 'No, réstalo de mi disponible'}
+            sub={f.alreadyDiscounted
+              ? 'Actívalo si el banco ya lo restó de tu crédito disponible y no quieres contarlo dos veces'
+              : 'Actívalo si el banco ya lo restó de tu crédito disponible y no quieres contarlo dos veces'}
+          />
+        </div>
       </div>
       <div className="sheet-actions">
         {initial && <button className="btn-danger" onClick={()=>{onDelete(initial.id);onClose();}}>Eliminar</button>}
         <button className="btn-secondary" onClick={onClose}>Cancelar</button>
-        <button className="btn-primary" onClick={()=>{if(f.desc){onSave(f);onClose();}}}>Guardar</button>
+        <button className="btn-primary" onClick={()=>{if(f.desc){onSave(f);onClose();}}}>Agregar</button>
       </div>
     </Sheet>
   );
@@ -1287,8 +1338,8 @@ function App() {
               onBack={()=>setDetail(null)}
               onEditCard={c=>setCardModal(c)}
               onToggleExpense={toggleExpense}
-              onEditExpense={(exp,cid)=>setExpModal({cardId:cid,exp})}
-              onAddExpense={cid=>setExpModal({cardId:cid})}
+              onEditExpense={(exp,cid)=>setExpModal({cardId:cid, cutDay:cards.find(c=>c.id===cid)?.cutDay, exp})}
+              onAddExpense={cid=>setExpModal({cardId:cid, cutDay:cards.find(c=>c.id===cid)?.cutDay})}
               onToggleMsiPaid={toggleMsiPaid}
               onEditMsi={(item,cid)=>setMsiModal({cardId:cid,item})}
               onAddMsi={cid=>setMsiModal({cardId:cid})}
@@ -1324,6 +1375,7 @@ function App() {
       {expModal && (
         <ExpenseForm
           initial={expModal.exp||null}
+          cutDay={expModal.cutDay||1}
           onSave={f=>saveExpense(f,expModal.cardId)}
           onDelete={deleteExpense}
           onClose={()=>setExpModal(null)}
